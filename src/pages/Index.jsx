@@ -2,140 +2,136 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../Navbar';
 import UrlInput from '../UrlInput';
+import axios from 'axios';
 import config from '../config';
 
 const Index = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [result, setResult] = useState(null);
-  const [url, setUrl] = useState("");
   const navigate = useNavigate();
 
-  const handleAnalyze = async (analyzeUrl) => {
+  const BACKEND_URL = config.BACKEND_URL;
+
+  const handleAnalyze = async (url) => {
+    setIsLoading(true);
+    setError(null);
+    
+    console.log('🚀 Starting analysis...');
+    console.log('📍 Target URL:', url);
+    console.log('🔗 Backend URL:', BACKEND_URL);
+    console.log('📡 Full endpoint:', `${BACKEND_URL}/analyze_sentiment`);
+
     try {
-      setIsLoading(true);
-      setResult(null);
-      setError(null);
-      setUrl(analyzeUrl);
-
-      console.log("🚀 Starting analysis for URL:", analyzeUrl);
-      console.log("🌐 Using backend URL:", config.BACKEND_URL);
+      console.log('📤 Sending POST request to backend...');
       
-      // First test if backend is running
-      try {
-        const testResponse = await fetch(`${config.BACKEND_URL}/test`);
-        if (!testResponse.ok) {
-          throw new Error('Backend server is not responding');
+      const response = await axios.post(`${BACKEND_URL}/analyze_sentiment`, 
+        { url },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          timeout: 60000 // 60 second timeout
         }
-        console.log("✅ Backend is running");
-      } catch (testError) {
-        console.error("❌ Backend test failed:", testError);
-        throw new Error("Backend server is not running. Please check the deployment.");
+      );
+      
+      console.log('✅ Response received from backend:');
+      console.log('📊 Response status:', response.status);
+      console.log('📋 Response headers:', response.headers);
+      console.log('💾 Response data:', response.data);
+      
+      const backendData = response.data;
+
+      if (backendData.status === "success") {
+        console.log('🎉 Analysis successful, processing data...');
+        
+        const totalReviews = backendData.summary?.total_reviews_found || 0;
+        console.log('📈 Total reviews found:', totalReviews);
+        console.log('🧠 Insights received:', backendData.insights_for_manager?.length || 0);
+
+        const transformedData = {
+          summary: {
+            positive: Math.round((backendData.summary.positive_percentage / 100) * totalReviews),
+            negative: Math.round((backendData.summary.negative_percentage / 100) * totalReviews),
+            neutral: Math.round((backendData.summary.neutral_percentage / 100) * totalReviews),
+            positivePercentage: backendData.summary.positive_percentage,
+            negativePercentage: backendData.summary.negative_percentage,
+            neutralPercentage: backendData.summary.neutral_percentage,
+            totalReviewsFound: totalReviews
+          },
+          insights: (backendData.insights_for_manager || []).map((insightText, index) => ({
+            title: `Key Insight ${index + 1}`,
+            description: insightText
+          })),
+          reviews: {
+            all: (backendData.detailed_sentiments || []).map(review => ({
+              text: review.original_review,
+              sentiment: review.sentiment,
+              rating: review.vader_scores ? (
+                review.vader_scores.compound >= 0.05 ? 5 :
+                review.vader_scores.compound <= -0.05 ? 1 :
+                3
+              ) : 0,
+              date: "Analyzed Now",
+              author: "Customer"
+            })),
+            topPositive: (backendData.top_positive_reviews || []).slice(0, 5).map(review => ({
+              text: review.original_review,
+              sentiment: review.sentiment,
+              rating: 5,
+              date: "Analyzed Now",
+              author: "Customer"
+            })),
+            topNegative: (backendData.top_negative_reviews || []).slice(0, 5).map(review => ({
+              text: review.original_review,
+              sentiment: review.sentiment,
+              rating: 1,
+              date: "Analyzed Now",
+              author: "Customer"
+            }))
+          }
+        };
+
+        console.log('✨ Transformed Data for Frontend:', transformedData);
+        console.log('🧭 Navigating to insights dashboard...');
+        navigate('/insights', { state: { analysisData: transformedData, analyzedUrl: url } });
+
+      } else {
+        console.error('❌ Backend returned error status:', backendData.status);
+        console.error('📝 Error message:', backendData.message);
+        setError(backendData.message || "An unknown error occurred during analysis.");
       }
-
-      console.log("📡 Sending request to backend...");
-      const response = await fetch(`${config.BACKEND_URL}/analyze_sentiment`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ url: analyzeUrl }),
-      });
-
-      console.log("📥 Response status:", response.status);
+    } catch (err) {
+      console.error('💥 Analysis failed with error:');
+      console.error('🔍 Error object:', err);
+      console.error('📊 Error name:', err.name);
+      console.error('📝 Error message:', err.message);
       
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("❌ HTTP Error:", response.status, errorText);
-        throw new Error(`Server error (${response.status}): ${errorText}`);
+      if (err.response) {
+        console.error('🌐 Server responded with error:');
+        console.error('📊 Status code:', err.response.status);
+        console.error('📋 Response headers:', err.response.headers);
+        console.error('💾 Response data:', err.response.data);
+        setError(`Server error (${err.response.status}): ${err.response.data?.error || err.response.data?.message || 'Unknown server error'}`);
+      } else if (err.request) {
+        console.error('📡 No response received from server:');
+        console.error('🔍 Request details:', err.request);
+        console.error('🌐 Network/CORS issue detected');
+        setError(`No response from server at ${BACKEND_URL}. Please check if the backend is running and CORS is configured.`);
+      } else {
+        console.error('⚙️ Request setup error:', err.message);
+        setError('Error setting up the request: ' + err.message);
       }
-
-      const data = await response.json();
-      console.log("📊 Backend response:", data);
-
-      if (data.status === 'error') {
-        throw new Error(data.message || 'Analysis failed');
-      }
-
-      // Extract insights from the correct field
-      const insights = data?.insights_for_manager || [];
-      const detailedSentiments = data?.detailed_sentiments || [];
       
-      console.log(`📈 Found ${insights.length} insights and ${detailedSentiments.length} detailed sentiments`);
+      // Additional debugging info
+      console.log('🔧 Debug Info:');
+      console.log('- Backend URL:', BACKEND_URL);
+      console.log('- Environment:', import.meta.env.MODE);
+      console.log('- VITE_BACKEND_URL:', import.meta.env.VITE_BACKEND_URL);
       
-      // Count sentiments from detailed_sentiments
-      const positiveCount = detailedSentiments.filter(r => r.sentiment === 'positive').length;
-      const negativeCount = detailedSentiments.filter(r => r.sentiment === 'negative').length;
-      const neutralCount = detailedSentiments.filter(r => r.sentiment === 'neutral').length;
-
-      console.log(`📊 Sentiment counts - Positive: ${positiveCount}, Negative: ${negativeCount}, Neutral: ${neutralCount}`);
-
-      const summary = {
-        positive: positiveCount,
-        negative: negativeCount,
-        neutral: neutralCount,
-        positivePercentage: data?.summary?.positive_percentage || 0,
-        negativePercentage: data?.summary?.negative_percentage || 0,
-        neutralPercentage: data?.summary?.neutral_percentage || 0,
-      };
-
-      // Format insights for the dashboard
-      const formattedInsights = insights.map((insight, index) => ({
-        title: `Insight ${index + 1}`,
-        description: insight,
-        sentiment: "neutral",
-        index,
-      }));
-
-      // Get top positive and negative reviews
-      const topPositive = detailedSentiments
-        .filter(r => r.sentiment === 'positive')
-        .slice(0, 5)
-        .map(r => ({
-          text: r.original_review,
-          sentiment: r.sentiment,
-          score: r.vader_scores.compound
-        }));
-
-      const topNegative = detailedSentiments
-        .filter(r => r.sentiment === 'negative')
-        .slice(0, 5)
-        .map(r => ({
-          text: r.original_review,
-          sentiment: r.sentiment,
-          score: r.vader_scores.compound
-        }));
-
-      const analysisData = {
-        insights: formattedInsights,
-        summary,
-        reviews: {
-          topPositive,
-          topNegative,
-          all: detailedSentiments.map(r => ({
-            text: r.original_review,
-            sentiment: r.sentiment,
-            score: r.vader_scores.compound
-          }))
-        }
-      };
-
-      console.log("✅ Analysis complete, navigating to insights dashboard");
-      setResult(analysisData);
-      
-      // Navigate to insights dashboard with the data
-      navigate('/insights', { 
-        state: { 
-          analysisData, 
-          analyzedUrl: analyzeUrl 
-        } 
-      });
-
-    } catch (error) {
-      console.error("❌ Error analyzing sentiment:", error);
-      setError(error.message || "Failed to analyze sentiment. Please try again.");
     } finally {
       setIsLoading(false);
+      console.log('🏁 Analysis request completed.');
     }
   };
 
